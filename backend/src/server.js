@@ -50,6 +50,10 @@ app.use("/api/students", studentsRoute);
 const generateImageRoute = require("./routes/generateImage");
 app.use("/api/generate-image", generateImageRoute);
 
+// Auth0 — Login/Signup/Roles/Invites
+const authRoute = require("./routes/auth");
+app.use("/api/auth", authRoute);
+
 // --------------- Health Check ---------------
 app.get("/api/health", async (req, res) => {
     let ragStats = { totalChunks: 0, totalLessons: 0 };
