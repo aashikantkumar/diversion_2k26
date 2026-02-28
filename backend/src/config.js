@@ -30,4 +30,28 @@ module.exports = {
   AUTH0_CLIENT_SECRET: process.env.AUTH0_CLIENT_SECRET,
   AUTH0_MGMT_CLIENT_ID: process.env.AUTH0_MGMT_CLIENT_ID,
   AUTH0_MGMT_CLIENT_SECRET: process.env.AUTH0_MGMT_CLIENT_SECRET,
+
+  // Frontend
+  FRONTEND_URL: process.env.FRONTEND_URL,
+
+  // Validate required variables at startup — throws early if anything critical is missing
+  validate() {
+    const required = [
+      "DATABASE_URL",
+      "AUTH0_DOMAIN",
+      "AUTH0_AUDIENCE",
+      "AUTH0_MGMT_CLIENT_ID",
+      "AUTH0_MGMT_CLIENT_SECRET",
+    ];
+    const missing = required.filter((key) => !process.env[key]);
+    if (missing.length) {
+      throw new Error(
+        `❌ Missing required environment variables: ${missing.join(", ")}\n` +
+        `   Copy .env.example to .env and fill in the values.`
+      );
+    }
+    if (!process.env.GEMINI_API_KEY && !process.env.HUGGINGFACE_API_KEY) {
+      console.warn("⚠️  Neither GEMINI_API_KEY nor HUGGINGFACE_API_KEY set — embeddings will fail");
+    }
+  },
 };

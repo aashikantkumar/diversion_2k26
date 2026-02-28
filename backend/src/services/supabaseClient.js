@@ -9,6 +9,8 @@ const config = require("../config");
 // Initialize connection pool
 const pool = new Pool({
     connectionString: config.DATABASE_URL || "postgresql://neuroadapt_user:neuroadapt123@localhost:5432/neuroadapt",
+    // SSL required for DigitalOcean / Neon / Railway managed postgres
+    ssl: config.NODE_ENV === "production" ? { rejectUnauthorized: false } : false,
 });
 
 pool.on("connect", () => console.log("🐘 PostgreSQL connected"));

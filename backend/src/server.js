@@ -5,6 +5,10 @@
 
 const express = require("express");
 const cors = require("cors");
+const helmet = require("helmet");
+const morgan = require("morgan");
+const compression = require("compression");
+const rateLimit = require("express-rate-limit");
 const path = require("path");
 const config = require("./config");
 
@@ -13,10 +17,57 @@ const ragPipeline = require("./services/rag/ragPipeline");
 
 const app = express();
 
-// --------------- Middleware ---------------
-app.use(cors());
+// --------------- Security Middleware ---------------
+// Security headers
+app.use(helmet({
+    crossOriginEmbedderPolicy: false, // needed for PDF serving
+    contentSecurityPolicy: config.NODE_ENV === "production" ? undefined : false,
+}));
+
+// CORS — restrict to known origins in production
+const allowedOrigins = [
+    "http://localhost:3000",
+    "http://localhost:5173",
+    ...(config.FRONTEND_URL ? [config.FRONTEND_URL] : []),
+];
+app.use(cors({
+    origin: (origin, cb) => {
+        // allow server-to-server (no origin) and known origins
+        if (!origin || allowedOrigins.includes(origin)) return cb(null, true);
+        cb(new Error(`CORS: origin ${origin} not allowed`));
+    },
+    credentials: true,
+}));
+
+// Compress all responses
+app.use(compression());
+
+// HTTP request logging
+app.use(morgan(config.NODE_ENV === "production" ? "combined" : "dev"));
+
+// Body parsing
 app.use(express.json({ limit: "10mb" }));
 app.use(express.urlencoded({ extended: true }));
+
+// --------------- Rate Limiting ---------------
+// Global: 200 req/15min per IP
+app.use(rateLimit({
+    windowMs: 15 * 60 * 1000,
+    max: 200,
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { error: "Too many requests. Please try again later." },
+}));
+
+// Strict limit on AI endpoints (expensive operations)
+const aiLimit = rateLimit({
+    windowMs: 60 * 1000, // 1 minute
+    max: 10,
+    message: { error: "AI rate limit exceeded. Max 10 requests/minute." },
+});
+app.use("/api/upload", aiLimit);
+app.use("/api/transform", aiLimit);
+app.use("/api/generate-image", aiLimit);
 
 // Serve static files (sign language videos, etc.)
 app.use("/assets", express.static(path.join(__dirname, "../public/assets")));
@@ -77,38 +128,74 @@ app.get("/api/health", async (req, res) => {
     });
 });
 
+// --------------- 404 Handler ---------------
+app.use((req, res) => {
+    res.status(404).json({ error: "Route not found" });
+});
+
 // --------------- Error Handler ---------------
 app.use((err, req, res, next) => {
-    console.error("Server Error:", err.message);
-    res.status(500).json({
+    // CORS errors
+    if (err.message && err.message.startsWith("CORS:")) {
+        return res.status(403).json({ error: err.message });
+    }
+    // Auth errors from express-oauth2-jwt-bearer
+    if (err.status === 401 || err.name === "UnauthorizedError") {
+        return res.status(401).json({ error: "Unauthorized", details: err.message });
+    }
+    console.error("Server Error:", err.stack || err.message);
+    res.status(err.status || 500).json({
         error: "Internal server error",
         details: config.NODE_ENV === "development" ? err.message : undefined,
     });
 });
 
 // --------------- Start Server ---------------
-// Initialize RAG BEFORE accepting traffic (avoid race condition)
 async function startServer() {
+    // Validate required env vars before starting
+    config.validate();
+
     try {
         await ragPipeline.init();
     } catch (err) {
         console.error("⚠️ RAG init failed (non-critical):", err.message);
     }
 
-    app.listen(config.PORT, () => {
+    const server = app.listen(config.PORT, () => {
         console.log(`
   ╔══════════════════════════════════════════════╗
   ║  🧠 NeuroAdapt Backend Running              ║
   ║  📍 http://localhost:${config.PORT}                  ║
+  ║  🌍 ENV: ${config.NODE_ENV.padEnd(34)}║
   ║  🔑 Gemini API: ${config.GEMINI_API_KEY ? "✅ Configured" : "❌ Missing"}            ║
   ║  🤗 HuggingFace: ${config.HUGGINGFACE_API_KEY ? "✅ Configured" : "⚠️  Gemini fallback"}       ║
   ║  🗄️  PostgreSQL: ${config.DATABASE_URL ? "✅ Configured" : "❌ Missing"}           ║
+  ║  🔐 Auth0: ${config.AUTH0_DOMAIN ? "✅ Configured" : "❌ Missing"}                  ║
   ║  🔍 RAG: Custom (pgvector + hybrid search)  ║
   ╚══════════════════════════════════════════════╝
   `);
     });
+
+    // Graceful shutdown
+    const shutdown = (signal) => {
+        console.log(`\n🛑 ${signal} received — shutting down gracefully`);
+        server.close(() => {
+            console.log("✅ Server closed");
+            process.exit(0);
+        });
+        setTimeout(() => { process.exit(1); }, 10000); // force exit after 10s
+    };
+    process.on("SIGTERM", () => shutdown("SIGTERM"));
+    process.on("SIGINT",  () => shutdown("SIGINT"));
+    process.on("uncaughtException", (err) => {
+        console.error("💥 Uncaught Exception:", err);
+        shutdown("uncaughtException");
+    });
+
+    return server;
 }
 
-startServer();
-
-module.exports = app;
+startServer().catch((err) => {
+    console.error("❌ Failed to start server:", err.message);
+    process.exit(1);
+});

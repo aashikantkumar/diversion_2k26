@@ -18,6 +18,8 @@ const config = require("../../config");
 // Share the pg pool with the rest of the app
 const pool = new Pool({
     connectionString: config.DATABASE_URL || "postgresql://neuroadapt_user:neuroadapt123@localhost:5432/neuroadapt",
+    // SSL required for DigitalOcean / Neon / Railway managed postgres
+    ssl: config.NODE_ENV === "production" ? { rejectUnauthorized: false } : false,
 });
 
 let _initialized = false;
