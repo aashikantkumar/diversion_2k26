@@ -35,6 +35,18 @@ app.use("/api/lessons", lessonsRoute);
 const chatRoute = require("./routes/chat");
 app.use("/api/chat", chatRoute);
 
+// Member 2: Learning Disability Assessment (10-question screening)
+const assessRoute = require("./routes/assess");
+app.use("/api/assess", assessRoute);
+
+// Student Management (Teacher creates students, assigns lessons)
+const studentsRoute = require("./routes/students");
+app.use("/api/students", studentsRoute);
+
+// AI Image Generation (HuggingFace text-to-image per learning mode)
+const generateImageRoute = require("./routes/generateImage");
+app.use("/api/generate-image", generateImageRoute);
+
 // --------------- Health Check ---------------
 app.get("/api/health", (req, res) => {
     res.json({
@@ -43,8 +55,7 @@ app.get("/api/health", (req, res) => {
         members: {
             member2_ai: !!config.GEMINI_API_KEY ? "configured" : "MISSING API KEY",
             member2_hf: !!config.HUGGINGFACE_API_KEY ? "configured" : "not configured (chatbot uses Gemini fallback)",
-            member3_db: !!config.SUPABASE_URL ? "configured" : "MISSING SUPABASE URL",
-        },
+            member3_db: !!config.DATABASE_URL ? "configured (PostgreSQL)" : "MISSING DATABASE_URL",            cloudinary: !!config.CLOUDINARY_CLOUD_NAME ? "configured" : "not configured (image storage disabled)",        },
     });
 });
 
@@ -65,7 +76,7 @@ app.listen(config.PORT, () => {
   ║  📍 http://localhost:${config.PORT}                  ║
   ║  🔑 Gemini API: ${config.GEMINI_API_KEY ? "✅ Configured" : "❌ Missing"}            ║
   ║  🤗 HuggingFace: ${config.HUGGINGFACE_API_KEY ? "✅ Configured" : "⚠️  Gemini fallback"}       ║
-  ║  🗄️  Supabase:  ${config.SUPABASE_URL ? "✅ Configured" : "❌ Missing"}            ║
+  ║  🗄️  PostgreSQL: ${config.DATABASE_URL ? "✅ Configured" : "❌ Missing"}           ║
   ╚══════════════════════════════════════════════╝
   `);
 });

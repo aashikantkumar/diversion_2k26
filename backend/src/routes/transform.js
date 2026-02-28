@@ -7,7 +7,7 @@
 
 const express = require("express");
 const router = express.Router();
-const { runParallelChains } = require("../services/geminiClient");
+const { runParallelChains } = require("../services/groqClient");
 const { chunkText } = require("../services/chunker");
 const { indexLesson } = require("../services/vectorStore");
 

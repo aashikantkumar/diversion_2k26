@@ -13,7 +13,7 @@
 // 5. Top 3 matching chunks returned as context for chatbot
 
 const { GoogleGenerativeAIEmbeddings } = require("@langchain/google-genai");
-const { MemoryVectorStore } = require("langchain/vectorstores/memory");
+const { MemoryVectorStore } = require("@langchain/classic/vectorstores/memory");
 const config = require("../config");
 
 // Gemini embedding model (768-dim vectors)

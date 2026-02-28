@@ -11,10 +11,15 @@ module.exports = {
   NODE_ENV: process.env.NODE_ENV || "development",
 
   // Member 2: AI Engine
-  GEMINI_API_KEY: process.env.GEMINI_API_KEY,
+  GEMINI_API_KEY: process.env.GEMINI_API_KEY, // Kept for Vector Embeddings
+  GROQ_API_KEY: process.env.GROQ_API_KEY,    // Used for LLM generation
   HUGGINGFACE_API_KEY: process.env.HUGGINGFACE_API_KEY,
 
+  // Cloudinary (Image Storage)
+  CLOUDINARY_CLOUD_NAME: process.env.CLOUDINARY_CLOUD_NAME,
+  CLOUDINARY_API_KEY: process.env.CLOUDINARY_API_KEY,
+  CLOUDINARY_API_SECRET: process.env.CLOUDINARY_API_SECRET,
+
   // Member 3: Data Layer
-  SUPABASE_URL: process.env.SUPABASE_URL,
-  SUPABASE_ANON_KEY: process.env.SUPABASE_ANON_KEY,
+  DATABASE_URL: process.env.DATABASE_URL,
 };
