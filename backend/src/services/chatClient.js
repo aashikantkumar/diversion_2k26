@@ -1,131 +1,118 @@
 // ============================================
-// CHAT CLIENT — HuggingFace Models for Chatbots
+// CHAT CLIENT — HuggingFace (primary) + Groq (fallback)
 // ============================================
 // Owner: MEMBER 2 (AI/Logic Engineer)
-// Purpose: Each chatbot mode uses a DIFFERENT HuggingFace model
-//          selected for its specific strength.
+// Purpose: Each chatbot mode uses HuggingFace DeepSeek-R1 (chat completion)
+//          with Groq as automatic fallback on any error.
 //
-// ARCHITECTURE:
-//   Dyscalculia → DeepSeek (best at math reasoning)
-//   Dyslexia    → Qwen 2.5 (best instruction following)
-//   ADHD        → Mistral  (fastest response time)
-//
-// FALLBACK: If HuggingFace fails, falls back to Gemini.
+// NOTE: DeepSeek-R1 on HuggingFace uses the chat/conversational endpoint
+//       via @huggingface/inference InferenceClient.chatCompletion()
 
-const { HuggingFaceInference } = require("@langchain/community/llms/hf");
-const { ChatGoogleGenerativeAI } = require("@langchain/google-genai");
+const { InferenceClient } = require("@huggingface/inference");
+const { ChatGroq } = require("@langchain/groq");
 const { ChatPromptTemplate } = require("@langchain/core/prompts");
 const { JsonOutputParser } = require("@langchain/core/output_parsers");
 const config = require("../config");
 
-// ─────────────────────────────────────────────
-// HuggingFace model instances (one per chatbot mode)
-// ─────────────────────────────────────────────
 const HF_KEY = config.HUGGINGFACE_API_KEY;
+// Llama-3.2-3B-Instruct: free tier, fast, good at following instructions
+const HF_MODEL = "meta-llama/Llama-3.2-3B-Instruct";
 
-const hfModels = HF_KEY ? {
-    adhd: new HuggingFaceInference({
-        model: "mistralai/Mistral-7B-Instruct-v0.3",
-        apiKey: HF_KEY,
-        temperature: 0.8,
-        maxTokens: 500,
-    }),
-    dyslexia: new HuggingFaceInference({
-        model: "Qwen/Qwen2.5-7B-Instruct",
-        apiKey: HF_KEY,
-        temperature: 0.5,
-        maxTokens: 500,
-    }),
-    dyscalculia: new HuggingFaceInference({
-        model: "deepseek-ai/DeepSeek-R1-Distill-Qwen-7B",
-        apiKey: HF_KEY,
-        temperature: 0.6,
-        maxTokens: 500,
-    }),
-} : null;
+// HuggingFace InferenceClient (uses chat completion — correct for DeepSeek-R1)
+const hfClient = HF_KEY ? new InferenceClient(HF_KEY) : null;
 
-// Gemini fallback model (used if HuggingFace not configured or fails)
-const geminiFallback = new ChatGoogleGenerativeAI({
-    modelName: "gemini-2.0-flash-lite",
-    apiKey: config.GEMINI_API_KEY,
-    temperature: 0.7,
-    maxOutputTokens: 1024,
+// Groq fallback
+const groqFallback = new ChatGroq({
+    model: "llama-3.3-70b-versatile",
+    apiKey: config.GROQ_API_KEY,
+    temperature: 0.5,
+    maxTokens: 1024,
 });
 
 const jsonParser = new JsonOutputParser();
 
 /**
- * Get the appropriate chat model for a mode.
- * Uses HuggingFace if available, otherwise Gemini fallback.
+ * Invoke HuggingFace DeepSeek-R1 via chat completion endpoint.
  */
-function getChatModel(mode) {
-    if (hfModels && hfModels[mode]) {
-        return { model: hfModels[mode], provider: "HuggingFace" };
+async function invokeHuggingFace(systemPrompt, context, question) {
+    const userMessage = `LESSON CONTEXT:\n${context}\n\nSTUDENT QUESTION: ${question}`;
+    const resp = await hfClient.chatCompletion({
+        model: HF_MODEL,
+        messages: [
+            { role: "system", content: systemPrompt },
+            { role: "user", content: userMessage },
+        ],
+        max_tokens: 1024,
+        temperature: 0.7,
+    });
+    const text = resp.choices?.[0]?.message?.content || "";
+    // Normalize double-braces {{ }} → { } (LLM sometimes over-escapes template syntax)
+    const normalized = text.replace(/\{\{/g, "{").replace(/\}\}/g, "}");
+    const jsonMatch = normalized.match(/\{[\s\S]*\}/);
+    if (jsonMatch) {
+        try { return { ...JSON.parse(jsonMatch[0]), source: "HuggingFace" }; } catch {}
     }
-    return { model: geminiFallback, provider: "Gemini" };
+    return { reply: normalized.trim(), source: "HuggingFace" };
+}
+
+/**
+ * Invoke Groq with JSON parsing + raw text fallback.
+ */
+async function invokeGroq(systemPrompt, context, question, sourceName) {
+    const prompt = ChatPromptTemplate.fromMessages([
+        ["system", systemPrompt],
+        ["human", `LESSON CONTEXT:\n{context}\n\nSTUDENT QUESTION: {question}`],
+    ]);
+    try {
+        const chain = prompt.pipe(groqFallback).pipe(jsonParser);
+        const result = await chain.invoke({ context, question });
+        return { ...result, source: sourceName };
+    } catch {
+        const chain = prompt.pipe(groqFallback);
+        const rawResult = await chain.invoke({ context, question });
+        const text = typeof rawResult === "string" ? rawResult : rawResult?.content || String(rawResult);
+        const jsonMatch = text.match(/\{[\s\S]*\}/);
+        if (jsonMatch) {
+            try { return { ...JSON.parse(jsonMatch[0]), source: sourceName }; } catch {}
+        }
+        return { reply: text, source: sourceName };
+    }
 }
 
 /**
  * Run a chatbot conversation turn.
+ * Tries HuggingFace first; falls back to Groq on any error.
  *
  * @param {string} systemPrompt - Mode-specific personality prompt
- * @param {string} context - RAG-retrieved context from the lesson
+ * @param {string} context - RAG-retrieved lesson context
  * @param {string} question - Student's question
  * @param {string} mode - "adhd" | "dyslexia" | "dyscalculia"
- * @returns {object} Parsed JSON response from the chatbot
+ * @returns {object} Parsed response with source field
  */
 async function runChatChain(systemPrompt, context, question, mode) {
-    const { model, provider } = getChatModel(mode);
-
-    const fullPrompt = `${systemPrompt}
-
-LESSON CONTEXT (answer ONLY from this):
-${context}
-
-STUDENT QUESTION: ${question}`;
-
-    try {
-        if (provider === "HuggingFace") {
-            // HuggingFace returns raw text — parse JSON manually
-            const rawResponse = await model.invoke(fullPrompt);
-            try {
-                // Try to extract JSON from response
-                const jsonMatch = rawResponse.match(/\{[\s\S]*\}/);
-                if (jsonMatch) return JSON.parse(jsonMatch[0]);
-                return { reply: rawResponse, source: "HuggingFace" };
-            } catch {
-                return { reply: rawResponse, source: "HuggingFace" };
-            }
-        } else {
-            // Gemini — use LangChain's ChatPromptTemplate + JsonOutputParser
-            const prompt = ChatPromptTemplate.fromMessages([
-                ["system", systemPrompt],
-                ["human", `LESSON CONTEXT:\n{context}\n\nSTUDENT QUESTION: {question}`],
-            ]);
-            const chain = prompt.pipe(model).pipe(jsonParser);
-            const result = await chain.invoke({ context, question });
-            return { ...result, source: "Gemini" };
+    if (hfClient) {
+        try {
+            console.log(`   🤗 Using HuggingFace (${HF_MODEL})...`);
+            const result = await invokeHuggingFace(systemPrompt, context, question);
+            console.log(`   ✅ HuggingFace responded`);
+            return result;
+        } catch (hfError) {
+            console.warn(`   ⚠️ HuggingFace failed: ${hfError.message}`);
+            console.log(`   🔄 Falling back to Groq...`);
         }
-    } catch (error) {
-        console.error(`   ⚠️ ${provider} chat failed: ${error.message}`);
-
-        // If HuggingFace failed, try Gemini as fallback
-        if (provider === "HuggingFace") {
-            console.log(`   🔄 Falling back to Gemini for ${mode} chat...`);
-            try {
-                const prompt = ChatPromptTemplate.fromMessages([
-                    ["system", systemPrompt],
-                    ["human", `LESSON CONTEXT:\n{context}\n\nSTUDENT QUESTION: {question}`],
-                ]);
-                const chain = prompt.pipe(geminiFallback).pipe(jsonParser);
-                const result = await chain.invoke({ context, question });
-                return { ...result, source: "Gemini-Fallback" };
-            } catch (fallbackError) {
-                throw new Error(`Both HuggingFace and Gemini failed: ${fallbackError.message}`);
-            }
-        }
-        throw error;
+    } else {
+        console.log(`   ℹ️ HuggingFace not configured — using Groq`);
     }
+
+    return await invokeGroq(systemPrompt, context, question, hfClient ? "Groq-Fallback" : "Groq");
+}
+
+/**
+ * Returns which provider will be used for a given mode.
+ */
+function getChatModel(mode) {
+    if (hfClient) return { provider: "HuggingFace", model: HF_MODEL };
+    return { provider: "Groq", model: "llama-3.3-70b-versatile" };
 }
 
 module.exports = { runChatChain, getChatModel };

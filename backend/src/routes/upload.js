@@ -9,10 +9,10 @@ const express = require("express");
 const router = express.Router();
 const upload = require("../middleware/multerConfig");
 const { extractTextFromPDF } = require("../services/pdfExtractor");
-const { saveLesson } = require("../services/supabaseClient");
+const { saveLesson, saveLessonAssignment, getStudentById } = require("../services/supabaseClient");
 
 // Import Member 2's LangChain services
-const { runParallelChains } = require("../services/geminiClient");
+const { runParallelChains } = require("../services/groqClient");
 const { chunkText } = require("../services/chunker");
 const { indexLesson } = require("../services/vectorStore");
 const { dyslexiaSystemPrompt } = require("../services/prompts/dyslexia");
@@ -43,6 +43,17 @@ router.post("/", upload.single("pdf"), async (req, res) => {
         }
 
         console.log(`\n📄 Upload received: ${req.file.originalname} (${(req.file.size / 1024).toFixed(1)} KB)`);
+
+        // Check if teacher is assigning to a specific student
+        const studentId = req.body.studentId || null;
+        let student = null;
+        if (studentId) {
+            student = await getStudentById(studentId);
+            if (!student) {
+                return res.status(404).json({ error: `Student not found: ${studentId}` });
+            }
+            console.log(`   👤 Assigning to student: ${student.name} (mode: ${student.learning_mode || 'not assessed'})`);
+        }
 
         // 2. Extract text from PDF
         const pdfData = await extractTextFromPDF(req.file.buffer);
@@ -87,6 +98,9 @@ router.post("/", upload.single("pdf"), async (req, res) => {
             id: lessonId,
             title,
             original: pdfData.text,
+            studentId: studentId || null,
+            studentName: student?.name || null,
+            learningMode: student?.learning_mode || null,
             dyslexia: { ...FALLBACKS.dyslexia, ...results.dyslexia },
             adhd: { ...FALLBACKS.adhd, ...results.adhd },
             dyscalculia: { ...FALLBACKS.dyscalculia, ...results.dyscalculia },
@@ -99,8 +113,8 @@ router.post("/", upload.single("pdf"), async (req, res) => {
             },
             metadata: {
                 processingTimeMs: processingTime,
-                modelPool: ["gemini-2.0-flash-lite", "gemini-flash-latest", "gemini-2.0-flash"],
-                architecture: "multi-model-round-robin",
+                modelPool: ["llama-3.3-70b-versatile", "llama-4-scout-17b-16e-instruct", "qwen3-32b"],
+                architecture: "multi-model-round-robin (Groq)",
                 framework: "LangChain",
                 ragEnabled: true,
                 ragChunks: ragChunks.length,
@@ -118,6 +132,12 @@ router.post("/", upload.single("pdf"), async (req, res) => {
             subject,
             transformedJSON: response,
         }).catch((err) => console.error("   ⚠️ Background save failed:", err.message));
+
+        // 7. If teacher assigned to a student, create the assignment
+        if (studentId) {
+            saveLessonAssignment(studentId, lessonId, student.learning_mode || "simplified")
+                .catch((err) => console.error("   ⚠️ Lesson assignment failed:", err.message));
+        }
 
         console.log(`   ✅ Upload complete in ${processingTime}ms`);
         res.json(response);
