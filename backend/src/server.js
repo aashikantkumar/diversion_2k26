@@ -8,6 +8,9 @@ const cors = require("cors");
 const path = require("path");
 const config = require("./config");
 
+// Custom RAG pipeline
+const ragPipeline = require("./services/rag/ragPipeline");
+
 const app = express();
 
 // --------------- Middleware ---------------
@@ -48,14 +51,25 @@ const generateImageRoute = require("./routes/generateImage");
 app.use("/api/generate-image", generateImageRoute);
 
 // --------------- Health Check ---------------
-app.get("/api/health", (req, res) => {
+app.get("/api/health", async (req, res) => {
+    let ragStats = { totalChunks: 0, totalLessons: 0 };
+    try { ragStats = await ragPipeline.getStats(); } catch {}
     res.json({
         status: "ok",
         timestamp: new Date().toISOString(),
         members: {
             member2_ai: !!config.GEMINI_API_KEY ? "configured" : "MISSING API KEY",
             member2_hf: !!config.HUGGINGFACE_API_KEY ? "configured" : "not configured (chatbot uses Gemini fallback)",
-            member3_db: !!config.DATABASE_URL ? "configured (PostgreSQL)" : "MISSING DATABASE_URL",            cloudinary: !!config.CLOUDINARY_CLOUD_NAME ? "configured" : "not configured (image storage disabled)",        },
+            member3_db: !!config.DATABASE_URL ? "configured (PostgreSQL)" : "MISSING DATABASE_URL",
+            cloudinary: !!config.CLOUDINARY_CLOUD_NAME ? "configured" : "not configured (image storage disabled)",
+        },
+        rag: {
+            engine: "Custom RAG (pgvector + hybrid search + RRF)",
+            embeddingModel: ragPipeline.EMBED_MODEL,
+            dimensions: ragPipeline.EMBED_DIM,
+            storage: "PostgreSQL pgvector (persistent)",
+            ...ragStats,
+        },
     });
 });
 
@@ -69,16 +83,28 @@ app.use((err, req, res, next) => {
 });
 
 // --------------- Start Server ---------------
-app.listen(config.PORT, () => {
-    console.log(`
+// Initialize RAG BEFORE accepting traffic (avoid race condition)
+async function startServer() {
+    try {
+        await ragPipeline.init();
+    } catch (err) {
+        console.error("⚠️ RAG init failed (non-critical):", err.message);
+    }
+
+    app.listen(config.PORT, () => {
+        console.log(`
   ╔══════════════════════════════════════════════╗
   ║  🧠 NeuroAdapt Backend Running              ║
   ║  📍 http://localhost:${config.PORT}                  ║
   ║  🔑 Gemini API: ${config.GEMINI_API_KEY ? "✅ Configured" : "❌ Missing"}            ║
   ║  🤗 HuggingFace: ${config.HUGGINGFACE_API_KEY ? "✅ Configured" : "⚠️  Gemini fallback"}       ║
   ║  🗄️  PostgreSQL: ${config.DATABASE_URL ? "✅ Configured" : "❌ Missing"}           ║
+  ║  🔍 RAG: Custom (pgvector + hybrid search)  ║
   ╚══════════════════════════════════════════════╝
   `);
-});
+    });
+}
+
+startServer();
 
 module.exports = app;

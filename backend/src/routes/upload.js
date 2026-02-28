@@ -14,7 +14,8 @@ const { saveLesson, saveLessonAssignment, getStudentById } = require("../service
 // Import Member 2's LangChain services
 const { runParallelChains } = require("../services/groqClient");
 const { chunkText } = require("../services/chunker");
-const { indexLesson } = require("../services/vectorStore");
+// Custom RAG pipeline (replaces old in-memory vectorStore)
+const { indexLesson } = require("../services/rag/ragPipeline");
 const { dyslexiaSystemPrompt } = require("../services/prompts/dyslexia");
 const { adhdSystemPrompt } = require("../services/prompts/adhd");
 const { dyscalculiaSystemPrompt } = require("../services/prompts/dyscalculia");
@@ -74,12 +75,13 @@ router.post("/", upload.single("pdf"), async (req, res) => {
         console.log("   🧠 Starting LangChain transformation...");
         const sections = chunkText(pdfData.text, 3000);
 
-        // 5. RAG: Index smaller chunks for chatbot semantic search
-        const ragChunks = chunkText(pdfData.text, 500);
+        // 5. RAG: Index into persistent pgvector store (custom RAG)
         const lessonId = `lesson_${Date.now()}`;
-        indexLesson(lessonId, ragChunks).catch(err =>
+        // Smart chunking + embedding + pgvector storage (non-blocking)
+        indexLesson(lessonId, pdfData.text).catch(err =>
             console.error("   ⚠️ RAG indexing failed (non-critical):", err.message)
         );
+        const ragChunks = chunkText(pdfData.text, 500); // Still count chunks for metadata
 
         const tasks = [
             { name: "dyslexia", prompt: dyslexiaSystemPrompt },
@@ -115,9 +117,10 @@ router.post("/", upload.single("pdf"), async (req, res) => {
                 processingTimeMs: processingTime,
                 modelPool: ["llama-3.3-70b-versatile", "llama-4-scout-17b-16e-instruct", "qwen3-32b"],
                 architecture: "multi-model-round-robin (Groq)",
-                framework: "LangChain",
+                framework: "Custom RAG (pgvector + HuggingFace embeddings + RRF hybrid search)",
                 ragEnabled: true,
                 ragChunks: ragChunks.length,
+                ragStorage: "PostgreSQL pgvector (persistent)",
                 pdfPages: pdfData.numPages,
                 originalFileName: req.file.originalname,
                 textLength: pdfData.text.length,

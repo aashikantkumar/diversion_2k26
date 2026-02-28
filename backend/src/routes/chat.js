@@ -16,7 +16,8 @@
 
 const express = require("express");
 const router = express.Router();
-const { searchLesson, isLessonIndexed, getIndexedLessons } = require("../services/vectorStore");
+// Custom RAG pipeline (persistent pgvector + hybrid search + RRF)
+const { searchLesson, isLessonIndexed, getIndexedLessons } = require("../services/rag/ragPipeline");
 const { runChatChain } = require("../services/chatClient");
 const { adhdChatPrompt, dyslexiaChatPrompt, dyscalculiaChatPrompt } = require("../services/prompts/chatPersonalities");
 
@@ -63,15 +64,24 @@ router.post("/:mode", async (req, res) => {
     console.log(`   ❓ "${message}"`);
 
     try {
-        // 1. RAG: Semantic search for relevant context
+        // 1. RAG: Hybrid search (vector + full-text + RRF reranking)
         let context = "";
         let sourcesUsed = 0;
+        let ragDetails = [];
 
-        if (isLessonIndexed(lessonId)) {
+        const lessonIndexed = await isLessonIndexed(lessonId);
+        if (lessonIndexed) {
             const searchResults = await searchLesson(lessonId, message, 3);
             sourcesUsed = searchResults.length;
             context = searchResults.map(r => r.text).join("\n\n---\n\n");
-            console.log(`   🔍 RAG found ${sourcesUsed} relevant chunks (scores: ${searchResults.map(r => r.score).join(", ")})`);
+            ragDetails = searchResults.map(r => ({
+                chunkIndex: r.chunkIndex,
+                score: r.score,
+                vectorRank: r.vectorRank,
+                ftsRank: r.ftsRank,
+                section: r.section || null,
+            }));
+            console.log(`   🔍 Hybrid search found ${sourcesUsed} chunks (RRF scores: ${searchResults.map(r => r.score).join(", ")})`);
         } else {
             console.log(`   ⚠️ Lesson not indexed — using general knowledge`);
             context = "No lesson context available. Answer based on general knowledge but keep it simple.";
@@ -101,7 +111,9 @@ router.post("/:mode", async (req, res) => {
             response,
             rag: {
                 sourcesUsed,
-                lessonIndexed: isLessonIndexed(lessonId),
+                lessonIndexed: lessonIndexed,
+                searchType: "hybrid (vector + full-text + RRF)",
+                chunks: ragDetails,
             },
             metadata: {
                 processingTimeMs: processingTime,
@@ -134,11 +146,13 @@ router.get("/history/:sessionId", (req, res) => {
  * GET /api/chat/status
  * Returns which lessons are indexed and available for chat
  */
-router.get("/status", (req, res) => {
+router.get("/status", async (req, res) => {
+    const indexed = await getIndexedLessons();
     res.json({
-        indexedLessons: getIndexedLessons(),
-        totalIndexed: getIndexedLessons().length,
+        indexedLessons: indexed,
+        totalIndexed: indexed.length,
         supportedModes: Object.keys(CHAT_PROMPTS),
+        ragEngine: "Custom RAG (pgvector + hybrid search + RRF)",
     });
 });
 
