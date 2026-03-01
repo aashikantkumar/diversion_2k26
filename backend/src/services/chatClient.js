@@ -32,10 +32,49 @@ const groqFallback = new ChatGroq({
 const jsonParser = new JsonOutputParser();
 
 /**
- * Invoke HuggingFace DeepSeek-R1 via chat completion endpoint.
+ * Bracket-depth JSON extractor — finds the exact first balanced {} or [].
+ * Avoids greedy-regex bugs that capture trailing text after the JSON.
+ */
+function extractChatJSON(raw) {
+    if (typeof raw !== "string") return raw;
+    let text = raw.replace(/<think>[\s\S]*?<\/think>/gi, "").trim();
+    text = text.replace(/\{\{/g, "{").replace(/\}\}/g, "}");
+    text = text.replace(/^```(?:json)?\s*/i, "").replace(/\s*```\s*$/m, "").trim();
+
+    const startIdx = text.indexOf("{");
+    if (startIdx === -1) return null;
+
+    let depth = 0, inStr = false, esc = false, end = -1;
+    for (let i = startIdx; i < text.length; i++) {
+        const ch = text[i];
+        if (esc)            { esc = false; continue; }
+        if (ch === "\\" && inStr) { esc = true; continue; }
+        if (ch === '"')     { inStr = !inStr; continue; }
+        if (inStr)          continue;
+        if (ch === "{")     depth++;
+        if (ch === "}")     { if (--depth === 0) { end = i; break; } }
+    }
+    if (end === -1) return null;
+    const jsonStr = text.slice(startIdx, end + 1);
+    try { return JSON.parse(jsonStr); } catch {
+        const cleaned = jsonStr
+            .replace(/\r\n/g, " ")
+            .replace(/[\r\n]/g, " ")
+            .replace(/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/g, " ");
+        try { return JSON.parse(cleaned); } catch { return null; }
+    }
+}
+
+/**
+ * Invoke HuggingFace via chat completion endpoint.
  */
 async function invokeHuggingFace(systemPrompt, context, question) {
-    const userMessage = `LESSON CONTEXT:\n${context}\n\nSTUDENT QUESTION: ${question}`;
+    const userMessage =
+        `=== SOURCE MATERIAL (answer ONLY from this) ===\n${context}\n` +
+        `=== END OF SOURCE MATERIAL ===\n\n` +
+        `STUDENT QUESTION: ${question}\n\n` +
+        `REMINDER: If the answer is not clearly stated in the SOURCE MATERIAL above, ` +
+        `use the out-of-context response defined in your instructions. Do NOT invent information.`;
     const resp = await hfClient.chatCompletion({
         model: HF_MODEL,
         messages: [
@@ -46,13 +85,24 @@ async function invokeHuggingFace(systemPrompt, context, question) {
         temperature: 0.7,
     });
     const text = resp.choices?.[0]?.message?.content || "";
-    // Normalize double-braces {{ }} → { } (LLM sometimes over-escapes template syntax)
-    const normalized = text.replace(/\{\{/g, "{").replace(/\}\}/g, "}");
-    const jsonMatch = normalized.match(/\{[\s\S]*\}/);
-    if (jsonMatch) {
-        try { return { ...JSON.parse(jsonMatch[0]), source: "HuggingFace" }; } catch {}
+    const parsed = extractChatJSON(text);
+    if (parsed) return { ...parsed, source: "HuggingFace" };
+    return { reply: text.trim(), source: "HuggingFace" };
+}
+
+/**
+ * Safely try to parse a string as JSON, returning null on failure.
+ */
+function tryParse(str) {
+    if (!str || typeof str !== "string") return null;
+    try { return JSON.parse(str); } catch {
+        // strip BOM / zero-width chars and retry
+        const cleaned = str
+            .replace(/^\uFEFF/, "")
+            .replace(/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/g, " ")
+            .trim();
+        try { return JSON.parse(cleaned); } catch { return null; }
     }
-    return { reply: normalized.trim(), source: "HuggingFace" };
 }
 
 /**
@@ -61,20 +111,29 @@ async function invokeHuggingFace(systemPrompt, context, question) {
 async function invokeGroq(systemPrompt, context, question, sourceName) {
     const prompt = ChatPromptTemplate.fromMessages([
         ["system", systemPrompt],
-        ["human", `LESSON CONTEXT:\n{context}\n\nSTUDENT QUESTION: {question}`],
+        ["human",
+            `=== SOURCE MATERIAL (answer ONLY from this) ===\n{context}\n` +
+            `=== END OF SOURCE MATERIAL ===\n\n` +
+            `STUDENT QUESTION: {question}\n\n` +
+            `REMINDER: If the answer is not clearly stated in the SOURCE MATERIAL above, ` +
+            `use the out-of-context response defined in your instructions. Do NOT invent information.`
+        ],
     ]);
     try {
         const chain = prompt.pipe(groqFallback).pipe(jsonParser);
         const result = await chain.invoke({ context, question });
+        // JsonOutputParser returns an object — but if `reply` is itself a JSON string, unwrap it
+        if (result && typeof result.reply === "string" && result.reply.trim().startsWith("{")) {
+            const inner = tryParse(result.reply) || extractChatJSON(result.reply);
+            if (inner?.reply) return { ...result, ...inner, source: sourceName };
+        }
         return { ...result, source: sourceName };
     } catch {
         const chain = prompt.pipe(groqFallback);
         const rawResult = await chain.invoke({ context, question });
         const text = typeof rawResult === "string" ? rawResult : rawResult?.content || String(rawResult);
-        const jsonMatch = text.match(/\{[\s\S]*\}/);
-        if (jsonMatch) {
-            try { return { ...JSON.parse(jsonMatch[0]), source: sourceName }; } catch {}
-        }
+        const parsed = extractChatJSON(text) || tryParse(text);
+        if (parsed) return { ...parsed, source: sourceName };
         return { reply: text, source: sourceName };
     }
 }

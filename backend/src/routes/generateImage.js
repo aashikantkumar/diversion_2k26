@@ -18,7 +18,7 @@ const express = require("express");
 const router = express.Router();
 const { generateImage, MODE_STYLES, IMAGE_MODEL } = require("../services/imageGenerator");
 const { uploadGeneratedImage, deleteImage, isConfigured } = require("../services/cloudinaryClient");
-const { saveGeneratedImage, getGeneratedImages, getGeneratedImageById, deleteGeneratedImage } = require("../services/supabaseClient");
+const { saveGeneratedImage, getGeneratedImages, getGeneratedImageById, deleteGeneratedImage } = require("../services/dbClient");
 
 // ─────────────────────────────────────────────
 // POST /api/generate-image

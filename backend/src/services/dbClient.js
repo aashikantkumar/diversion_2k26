@@ -1,7 +1,8 @@
 // ============================================
 // DATABASE CLIENT — PostgreSQL via pg
 // ============================================
-// Purpose: Connect to local PostgreSQL for lesson storage, student management, and assessments
+// Purpose: Connect to PostgreSQL for lesson storage, student management, and assessments
+// Auth: Auth0 handles all authentication — this file is purely for app data
 
 const { Pool } = require("pg");
 const config = require("../config");
@@ -318,4 +319,105 @@ async function deleteGeneratedImage(imageId) {
     }
 }
 
-module.exports = { saveLesson, getAllLessons, getLessonById, createStudent, getAllStudents, getStudentById, updateStudent, deleteStudent, saveAssessment, getStudentLessons, saveLessonAssignment, saveGeneratedImage, getGeneratedImages, getGeneratedImageById, deleteGeneratedImage };
+// ── Video DB helpers (mirrors image helpers) ──────────────────────────────
+
+/**
+ * Save a generated video record to DB.
+ * Table: generated_videos (created by migration SQL)
+ */
+async function saveGeneratedVideo({
+    topic, mode, specificConcept,
+    cloudinaryUrl, cloudinaryPublicId,
+    prompt, model,
+    durationSeconds, width, height,
+    sizeBytes, generationTimeMs,
+    studentId, lessonId,
+}) {
+    try {
+        const { rows } = await pool.query(
+            `INSERT INTO generated_videos
+                (topic, mode, specific_concept, cloudinary_url, cloudinary_public_id,
+                 prompt, model, duration_seconds, width, height,
+                 size_bytes, generation_time_ms, student_id, lesson_id)
+             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
+             RETURNING *`,
+            [
+                topic, mode, specificConcept || null,
+                cloudinaryUrl, cloudinaryPublicId || null,
+                prompt || null, model || null,
+                durationSeconds || null, width || null, height || null,
+                sizeBytes || null, generationTimeMs || null,
+                studentId || null, lessonId || null,
+            ]
+        );
+        return rows[0];
+    } catch (error) {
+        console.error("Video save error:", error.message);
+        throw error;
+    }
+}
+
+/**
+ * Fetch generated videos, optionally filtered by studentId / lessonId / mode.
+ */
+async function getGeneratedVideos({ studentId, lessonId, mode, limit = 20, offset = 0 } = {}) {
+    try {
+        const conditions = [];
+        const values = [];
+        let idx = 1;
+
+        if (studentId) { conditions.push(`student_id = $${idx++}`); values.push(studentId); }
+        if (lessonId)  { conditions.push(`lesson_id = $${idx++}`);  values.push(lessonId); }
+        if (mode)      { conditions.push(`mode = $${idx++}`);       values.push(mode); }
+
+        const where = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
+        values.push(limit, offset);
+
+        const { rows } = await pool.query(
+            `SELECT * FROM generated_videos ${where}
+             ORDER BY created_at DESC LIMIT $${idx++} OFFSET $${idx}`,
+            values
+        );
+        return rows;
+    } catch (error) {
+        console.error("Videos fetch error:", error.message);
+        return [];
+    }
+}
+
+/**
+ * Get a single generated video by ID.
+ */
+async function getGeneratedVideoById(videoId) {
+    try {
+        const { rows } = await pool.query(`SELECT * FROM generated_videos WHERE id = $1`, [videoId]);
+        return rows[0] || null;
+    } catch (error) {
+        console.error("Video fetch error:", error.message);
+        return null;
+    }
+}
+
+/**
+ * Delete a generated video record from DB, returning its Cloudinary public_id.
+ */
+async function deleteGeneratedVideo(videoId) {
+    try {
+        const { rows } = await pool.query(
+            `DELETE FROM generated_videos WHERE id = $1 RETURNING cloudinary_public_id`,
+            [videoId]
+        );
+        return rows[0] || null;
+    } catch (error) {
+        console.error("Video delete error:", error.message);
+        return null;
+    }
+}
+
+module.exports = {
+    saveLesson, getAllLessons, getLessonById,
+    createStudent, getAllStudents, getStudentById, updateStudent, deleteStudent,
+    saveAssessment, getStudentLessons, saveLessonAssignment,
+    saveGeneratedImage, getGeneratedImages, getGeneratedImageById, deleteGeneratedImage,
+    saveGeneratedVideo, getGeneratedVideos, getGeneratedVideoById, deleteGeneratedVideo,
+};

@@ -95,6 +95,62 @@ async function deleteImage(publicId) {
 }
 
 /**
+ * Upload a generated video buffer to Cloudinary.
+ * Uses resource_type: "video" so CDN can stream it.
+ *
+ * @param {Buffer} videoBuffer - Raw mp4 / webm binary
+ * @param {string} topic       - Lesson topic (used in public ID)
+ * @param {string} mode        - Learning mode (dyslexia | adhd | dyscalculia | simplified)
+ * @returns {Promise<{url:string, publicId:string, bytes:number, duration:number|undefined}>}
+ */
+async function uploadGeneratedVideo(videoBuffer, topic, mode) {
+    const sanitized = topic
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, "_")
+        .slice(0, 50);
+    const timestamp = Date.now();
+    const publicId = `neuroadapt/videos/${mode}/${sanitized}_${timestamp}`;
+
+    return new Promise((resolve, reject) => {
+        const uploadStream = cloudinary.uploader.upload_stream(
+            {
+                resource_type: "video",
+                public_id: publicId,
+                folder: `neuroadapt/videos/${mode}`,
+                format: "mp4",
+                overwrite: false,
+                tags: ["neuroadapt", "generated", mode],
+            },
+            (error, result) => {
+                if (error) return reject(new Error(`Cloudinary video upload error: ${error.message}`));
+                resolve({
+                    url:      result.secure_url,
+                    publicId: result.public_id,
+                    bytes:    result.bytes,
+                    duration: result.duration, // seconds (Cloudinary calculates this)
+                    width:    result.width,
+                    height:   result.height,
+                });
+            }
+        );
+        uploadStream.end(videoBuffer);
+    });
+}
+
+/**
+ * Delete a video from Cloudinary by public ID.
+ */
+async function deleteVideo(publicId) {
+    try {
+        const result = await cloudinary.uploader.destroy(publicId, { resource_type: "video" });
+        return result.result === "ok";
+    } catch (error) {
+        console.error("Cloudinary video delete error:", error.message);
+        return false;
+    }
+}
+
+/**
  * Check if Cloudinary is configured.
  */
 function isConfigured() {
@@ -105,6 +161,8 @@ module.exports = {
     uploadImage,
     uploadGeneratedImage,
     deleteImage,
+    uploadGeneratedVideo,
+    deleteVideo,
     isConfigured,
     cloudinary,
 };

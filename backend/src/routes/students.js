@@ -20,7 +20,7 @@ const {
     updateStudent,
     deleteStudent,
     getStudentLessons,
-} = require("../services/supabaseClient");
+} = require("../services/dbClient");
 
 /**
  * POST /api/students

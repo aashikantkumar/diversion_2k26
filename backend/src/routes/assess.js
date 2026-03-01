@@ -23,7 +23,7 @@ const { JsonOutputParser } = require("@langchain/core/output_parsers");
 const config = require("../config");
 const { ASSESSMENT_QUESTIONS, ANSWER_SCALE } = require("../services/assessmentQuestions");
 const { assessmentSystemPrompt } = require("../services/prompts/assessmentPrompt");
-const { saveAssessment, getStudentById } = require("../services/supabaseClient");
+const { saveAssessment, getStudentById } = require("../services/dbClient");
 
 // Use the most reliable available model for assessment
 const MODEL_PRIORITY = [

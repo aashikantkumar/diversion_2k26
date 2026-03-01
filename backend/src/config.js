@@ -1,7 +1,6 @@
 // ============================================
 // SHARED CONFIG — Used by ALL Members
 // ============================================
-// Owner: Shared (Member 2 sets GEMINI, Member 3 sets SUPABASE)
 
 require("dotenv").config();
 
@@ -10,9 +9,9 @@ module.exports = {
   PORT: process.env.PORT || 3001,
   NODE_ENV: process.env.NODE_ENV || "development",
 
-  // Member 2: AI Engine
-  GEMINI_API_KEY: process.env.GEMINI_API_KEY, // Kept for Vector Embeddings
-  GROQ_API_KEY: process.env.GROQ_API_KEY,    // Used for LLM generation
+  // AI Engine
+  GEMINI_API_KEY: process.env.GEMINI_API_KEY,
+  GROQ_API_KEY: process.env.GROQ_API_KEY,
   HUGGINGFACE_API_KEY: process.env.HUGGINGFACE_API_KEY,
 
   // Cloudinary (Image Storage)
@@ -20,33 +19,28 @@ module.exports = {
   CLOUDINARY_API_KEY: process.env.CLOUDINARY_API_KEY,
   CLOUDINARY_API_SECRET: process.env.CLOUDINARY_API_SECRET,
 
-  // Member 3: Data Layer
+  // ElevenLabs (Text-to-Speech)
+  ELEVENLABS_API_KEY: process.env.ELEVENLABS_API_KEY,
+
+  // Data Layer
   DATABASE_URL: process.env.DATABASE_URL,
 
-  // Auth0
-  AUTH0_DOMAIN: process.env.AUTH0_DOMAIN,
-  AUTH0_AUDIENCE: process.env.AUTH0_AUDIENCE,
-  AUTH0_CLIENT_ID: process.env.AUTH0_CLIENT_ID,
-  AUTH0_CLIENT_SECRET: process.env.AUTH0_CLIENT_SECRET,
-  AUTH0_MGMT_CLIENT_ID: process.env.AUTH0_MGMT_CLIENT_ID,
-  AUTH0_MGMT_CLIENT_SECRET: process.env.AUTH0_MGMT_CLIENT_SECRET,
+  // JWT Authentication (replaces Auth0)
+  // Generate secrets: node -e "console.log(require('crypto').randomBytes(64).toString('hex'))"
+  JWT_SECRET: process.env.JWT_SECRET,
+  JWT_REFRESH_SECRET: process.env.JWT_REFRESH_SECRET,
+  JWT_ACCESS_EXPIRES:  process.env.JWT_ACCESS_EXPIRES  || "15m",
+  JWT_REFRESH_EXPIRES: process.env.JWT_REFRESH_EXPIRES || "7d",
 
   // Frontend
   FRONTEND_URL: process.env.FRONTEND_URL,
 
-  // Validate required variables at startup — throws early if anything critical is missing
   validate() {
-    const required = [
-      "DATABASE_URL",
-      "AUTH0_DOMAIN",
-      "AUTH0_AUDIENCE",
-      "AUTH0_MGMT_CLIENT_ID",
-      "AUTH0_MGMT_CLIENT_SECRET",
-    ];
+    const required = ["DATABASE_URL", "JWT_SECRET", "JWT_REFRESH_SECRET"];
     const missing = required.filter((key) => !process.env[key]);
     if (missing.length) {
       throw new Error(
-        `❌ Missing required environment variables: ${missing.join(", ")}\n` +
+        `❌ Missing required env vars: ${missing.join(", ")}\n` +
         `   Copy .env.example to .env and fill in the values.`
       );
     }

@@ -28,6 +28,7 @@ app.use(helmet({
 const allowedOrigins = [
     "http://localhost:3000",
     "http://localhost:5173",
+    "http://localhost:5174",
     ...(config.FRONTEND_URL ? [config.FRONTEND_URL] : []),
 ];
 app.use(cors({
@@ -68,6 +69,8 @@ const aiLimit = rateLimit({
 app.use("/api/upload", aiLimit);
 app.use("/api/transform", aiLimit);
 app.use("/api/generate-image", aiLimit);
+app.use("/api/generate-video", aiLimit);
+app.use("/api/tts", aiLimit);
 
 // Serve static files (sign language videos, etc.)
 app.use("/assets", express.static(path.join(__dirname, "../public/assets")));
@@ -101,9 +104,17 @@ app.use("/api/students", studentsRoute);
 const generateImageRoute = require("./routes/generateImage");
 app.use("/api/generate-image", generateImageRoute);
 
-// Auth0 — Login/Signup/Roles/Invites
+// Auth: Custom JWT — login/register/refresh
 const authRoute = require("./routes/auth");
 app.use("/api/auth", authRoute);
+
+// AI Video Generation (HuggingFace text-to-video per learning mode)
+const generateVideoRoute = require("./routes/generateVideo");
+app.use("/api/generate-video", generateVideoRoute);
+
+// ElevenLabs Text-to-Speech (lesson narration + word pronunciation)
+const ttsRoute = require("./routes/tts");
+app.use("/api/tts", ttsRoute);
 
 // --------------- Health Check ---------------
 app.get("/api/health", async (req, res) => {
@@ -139,8 +150,8 @@ app.use((err, req, res, next) => {
     if (err.message && err.message.startsWith("CORS:")) {
         return res.status(403).json({ error: err.message });
     }
-    // Auth errors from express-oauth2-jwt-bearer
-    if (err.status === 401 || err.name === "UnauthorizedError") {
+    // JWT errors from requireAuth middleware
+    if (err.status === 401 || err.name === "UnauthorizedError" || err.name === "JsonWebTokenError") {
         return res.status(401).json({ error: "Unauthorized", details: err.message });
     }
     console.error("Server Error:", err.stack || err.message);
@@ -170,7 +181,7 @@ async function startServer() {
   ║  🔑 Gemini API: ${config.GEMINI_API_KEY ? "✅ Configured" : "❌ Missing"}            ║
   ║  🤗 HuggingFace: ${config.HUGGINGFACE_API_KEY ? "✅ Configured" : "⚠️  Gemini fallback"}       ║
   ║  🗄️  PostgreSQL: ${config.DATABASE_URL ? "✅ Configured" : "❌ Missing"}           ║
-  ║  🔐 Auth0: ${config.AUTH0_DOMAIN ? "✅ Configured" : "❌ Missing"}                  ║
+  ║  🔐 JWT Auth: ${config.JWT_SECRET ? "✅ Configured" : "❌ Missing"}               ║
   ║  🔍 RAG: Custom (pgvector + hybrid search)  ║
   ╚══════════════════════════════════════════════╝
   `);

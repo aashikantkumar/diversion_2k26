@@ -28,6 +28,17 @@ const CHAT_PROMPTS = {
     dyscalculia: dyscalculiaChatPrompt,
 };
 
+// Minimum RRF score for a chunk to be considered relevant (0–1 scale after normalisation)
+// Chunks below this are treated as "out of context"
+const MIN_RELEVANCE_SCORE = 0.05;
+
+// Pre-built "I don't know" responses per mode (avoids AI call entirely)
+const OUT_OF_CONTEXT_RESPONSES = {
+    adhd:        { reply: "That's not covered in your lesson! Stick to what we studied. Ask your teacher if you're curious! 🤔", interactionPrompt: "Want to try a question from your lesson?", emoji: "⚡" },
+    dyslexia:    { reply: "That is not in your lesson.\nI can only help with your lesson file.\nAsk your teacher for more! 🌟", difficultWords: [], encouragement: "You are doing great by asking questions! 🌟" },
+    dyscalculia: { reply: "That topic is not in your lesson. I can only answer from your lesson material. 🟦", visualAid: "", realWorldExample: "" },
+};
+
 // Chat history per session (simple in-memory store)
 const chatHistory = new Map();
 
@@ -70,22 +81,45 @@ router.post("/:mode", async (req, res) => {
         let ragDetails = [];
 
         const lessonIndexed = await isLessonIndexed(lessonId);
-        if (lessonIndexed) {
-            const searchResults = await searchLesson(lessonId, message, 3);
-            sourcesUsed = searchResults.length;
-            context = searchResults.map(r => r.text).join("\n\n---\n\n");
-            ragDetails = searchResults.map(r => ({
-                chunkIndex: r.chunkIndex,
-                score: r.score,
-                vectorRank: r.vectorRank,
-                ftsRank: r.ftsRank,
-                section: r.section || null,
-            }));
-            console.log(`   🔍 Hybrid search found ${sourcesUsed} chunks (RRF scores: ${searchResults.map(r => r.score).join(", ")})`);
-        } else {
-            console.log(`   ⚠️ Lesson not indexed — using general knowledge`);
-            context = "No lesson context available. Answer based on general knowledge but keep it simple.";
+
+        // ── Hard gate 1: lesson not indexed at all ─────────────────────────────
+        if (!lessonIndexed) {
+            console.log(`   🚫 Lesson not indexed — returning out-of-context response`);
+            const ooc = OUT_OF_CONTEXT_RESPONSES[mode];
+            return res.json({
+                mode, lessonId,
+                response: { ...ooc, source: "gate:not-indexed" },
+                rag: { sourcesUsed: 0, lessonIndexed: false, searchType: "none", chunks: [] },
+                metadata: { processingTimeMs: Date.now() - startTime, provider: "gate" },
+            });
         }
+
+        const searchResults = await searchLesson(lessonId, message, 4);
+
+        // ── Hard gate 2: no relevant chunks found ──────────────────────────────
+        const relevantChunks = searchResults.filter(r => (r.score ?? 0) >= MIN_RELEVANCE_SCORE);
+        sourcesUsed = relevantChunks.length;
+        ragDetails = relevantChunks.map(r => ({
+            chunkIndex: r.chunkIndex,
+            score: r.score,
+            vectorRank: r.vectorRank,
+            ftsRank: r.ftsRank,
+            section: r.section || null,
+        }));
+
+        if (relevantChunks.length === 0) {
+            console.log(`   🚫 No relevant chunks (${searchResults.length} found, all below threshold) — returning out-of-context`);
+            const ooc = OUT_OF_CONTEXT_RESPONSES[mode];
+            return res.json({
+                mode, lessonId,
+                response: { ...ooc, source: "gate:no-relevant-chunks" },
+                rag: { sourcesUsed: 0, lessonIndexed: true, searchType: "hybrid (vector + full-text + RRF)", chunks: [] },
+                metadata: { processingTimeMs: Date.now() - startTime, provider: "gate" },
+            });
+        }
+
+        context = relevantChunks.map(r => r.text).join("\n\n---\n\n");
+        console.log(`   🔍 Hybrid search found ${relevantChunks.length} relevant chunks (scores: ${relevantChunks.map(r => r.score?.toFixed(3)).join(", ")})`);
 
         // 2. Get the mode-specific system prompt
         const systemPrompt = CHAT_PROMPTS[mode];

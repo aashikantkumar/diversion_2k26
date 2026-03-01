@@ -13,55 +13,102 @@
 
 const { ChatGroq } = require("@langchain/groq");
 const { ChatPromptTemplate } = require("@langchain/core/prompts");
-const { JsonOutputParser } = require("@langchain/core/output_parsers");
+const { StringOutputParser } = require("@langchain/core/output_parsers");
 const config = require("../config");
 
-// Ensure API key format is correct
 if (!config.GROQ_API_KEY) {
     console.warn("⚠️ Warning: GROQ_API_KEY is missing. Transformation endpoints will fail.");
 }
 
 // ─────────────────────────────────────────────
-// 1. MULTI-MODEL LOAD BALANCING POOL (Groq)
+// 1. MODEL POOL (non-thinking models only)
 // ─────────────────────────────────────────────
-// By using 3 different models, we completely bypass single-model Rate Limits.
-// Each model has its own independent quota bucket.
 const MODEL_POOL = [
-    "llama-3.3-70b-versatile",         // Primary: Meta Llama 3.3 70B
-    "meta-llama/llama-4-scout-17b-16e-instruct",  // Fallback 1: Llama 4 Scout
-    "qwen/qwen3-32b"                   // Fallback 2: Qwen 3 32B
+    "llama-3.3-70b-versatile",                    // Primary
+    "meta-llama/llama-4-scout-17b-16e-instruct",  // Fallback 1
+    "llama-3.1-8b-instant",                       // Fallback 2 (replaces decommissioned gemma2-9b-it)
 ];
 
-const groqModels = MODEL_POOL.map(name => {
-    return new ChatGroq({
+const groqModels = MODEL_POOL.map(name =>
+    new ChatGroq({
         apiKey: config.GROQ_API_KEY,
         model: name,
-        temperature: 0.2,       // Low temp for structured JSON
+        temperature: 0.2,
         maxTokens: 2000,
-    });
-});
+    })
+);
 
 let currentModelIndex = 0;
 
-/**
- * Gets the next model in the pool (Round-Robin).
- * This ensures we distribute the load evenly across all 3 quotas.
- */
 function getNextModel() {
     const model = groqModels[currentModelIndex];
-    currentModelIndex = (currentModelIndex + 1) % groqModels.length; // Rotate 0 -> 1 -> 2 -> 0
+    currentModelIndex = (currentModelIndex + 1) % groqModels.length;
     return model;
 }
 
-const jsonParser = new JsonOutputParser();
-
 // ─────────────────────────────────────────────
-// 2. CHAIN EXECUTION (With Auto-Fallback)
+// 2. ROBUST JSON EXTRACTOR
 // ─────────────────────────────────────────────
-
 /**
- * Runs a single LangChain task on a single chunk with Auto-Fallback.
+ * Cleans LLM output and extracts valid JSON.
+ * Handles: <think> tags, markdown code fences, raw control characters.
  */
+function extractJSON(raw) {
+    if (typeof raw !== "string") return raw; // already parsed
+
+    // 1. Strip <think>...</think> blocks (Qwen/DeepSeek reasoning models)
+    let text = raw.replace(/<think>[\s\S]*?<\/think>/gi, "").trim();
+
+    // 2. Strip markdown code fences ```json ... ``` or ``` ... ```
+    text = text.replace(/^```(?:json)?\s*/i, "").replace(/\s*```\s*$/m, "").trim();
+
+    // 3. Find the start of the first JSON object or array
+    const startObj = text.indexOf("{");
+    const startArr = text.indexOf("[");
+    let start, opener, closing;
+    if (startObj === -1 && startArr === -1) throw new Error("No JSON found in LLM response");
+    if (startObj === -1 || (startArr !== -1 && startArr < startObj)) {
+        start = startArr; opener = "["; closing = "]";
+    } else {
+        start = startObj; opener = "{"; closing = "}";
+    }
+
+    // 4. Walk the string tracking bracket depth to find the exact closing bracket.
+    //    This avoids greedy-regex bugs where trailing } characters outside the JSON
+    //    cause "Unexpected non-whitespace character after JSON" parse errors.
+    let depth = 0, inString = false, escape = false, end = -1;
+    for (let i = start; i < text.length; i++) {
+        const ch = text[i];
+        if (escape)          { escape = false; continue; }
+        if (ch === "\\" && inString) { escape = true; continue; }
+        if (ch === '"')      { inString = !inString; continue; }
+        if (inString)        continue;
+        if (ch === opener)   depth++;
+        if (ch === closing)  { if (--depth === 0) { end = i; break; } }
+    }
+    if (end === -1) throw new Error("Unbalanced JSON brackets in LLM response");
+    const jsonStr = text.slice(start, end + 1);
+
+    // 5. Try direct parse
+    try {
+        return JSON.parse(jsonStr);
+    } catch (_) {
+        // Fall through to control-char cleaning
+    }
+
+    // 6. Strip raw control characters that can appear inside LLM string values
+    const cleaned = jsonStr
+        .replace(/\r\n/g, " ")
+        .replace(/[\r\n]/g, " ")
+        .replace(/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/g, " ");
+    return JSON.parse(cleaned);
+}
+
+// ─────────────────────────────────────────────
+// 3. CHAIN EXECUTION (with auto-fallback)
+// ─────────────────────────────────────────────
+const stringParser = new StringOutputParser();
+
 async function runAutoFallbackChain(promptString, textChunk, chunkIndex, attempt = 0) {
     const model = getNextModel();
     const modelName = model.model;
@@ -71,19 +118,22 @@ async function runAutoFallbackChain(promptString, textChunk, chunkIndex, attempt
         ["human", "{text}"]
     ]);
 
-    const chain = prompt.pipe(model).pipe(jsonParser);
+    const chain = prompt.pipe(model).pipe(stringParser);
 
     try {
         if (chunkIndex === 0) {
             console.log(`   🔀 chunk ${chunkIndex + 1} → ${modelName}`);
         }
-        return await chain.invoke({ text: textChunk });
+        const raw = await chain.invoke({ text: textChunk });
+        return extractJSON(raw);
     } catch (error) {
-        const isRateLimit = error.message.includes("429") || error.message.includes("rate limit") || error.message.includes("quota");
+        const isRateLimit =
+            error.message.includes("429") ||
+            error.message.includes("rate limit") ||
+            error.message.includes("quota");
 
         if (isRateLimit && attempt < MODEL_POOL.length) {
             console.warn(`     ⚠️  ${modelName} quota hit for chunk ${chunkIndex + 1}, trying next...`);
-            // Attempt again (getNextModel will automatically pick the next one)
             return runAutoFallbackChain(promptString, textChunk, chunkIndex, attempt + 1);
         }
 

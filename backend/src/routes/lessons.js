@@ -7,7 +7,7 @@
 
 const express = require("express");
 const router = express.Router();
-const { getAllLessons, getLessonById } = require("../services/supabaseClient");
+const { getAllLessons, getLessonById } = require("../services/dbClient");
 
 /**
  * GET /api/lessons
@@ -41,7 +41,22 @@ router.get("/:id", async (req, res) => {
             });
         }
 
-        res.json(lesson);
+        // Spread the `transformed` JSONB column into the top-level response so
+        // the frontend can read lesson.dyslexia, lesson.adhd, etc. directly.
+        const transformed =
+            typeof lesson.transformed === "string"
+                ? JSON.parse(lesson.transformed)
+                : lesson.transformed || {};
+
+        const flatLesson = {
+            id: lesson.id,
+            title: lesson.title,
+            subject: lesson.subject,
+            created_at: lesson.created_at,
+            ...transformed,
+        };
+
+        res.json(flatLesson);
     } catch (err) {
         console.error("Lesson fetch error:", err.message);
         res.status(500).json({ error: "Failed to fetch lesson" });
