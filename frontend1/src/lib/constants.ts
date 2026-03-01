@@ -1,0 +1,80 @@
+/** Mode-specific theming constants — reusable across all components */
+
+export const MODE_THEMES = {
+  dyslexia: {
+    label: "Dyslexia-Friendly",
+    emoji: "📖",
+    color: "amber",
+    bg: "bg-amber-50",
+    border: "border-amber-300",
+    text: "text-amber-900",
+    badge: "bg-amber-100 text-amber-800",
+    accent: "#f59e0b",
+    fontFamily: "'OpenDyslexic', sans-serif",
+    lineHeight: "leading-relaxed",
+    bgHex: "#fdf6e3",
+  },
+  adhd: {
+    label: "ADHD-Optimized",
+    emoji: "⚡",
+    color: "blue",
+    bg: "bg-blue-50",
+    border: "border-blue-300",
+    text: "text-blue-900",
+    badge: "bg-blue-100 text-blue-800",
+    accent: "#3b82f6",
+    fontFamily: "inherit",
+    lineHeight: "leading-normal",
+    bgHex: "#eff6ff",
+  },
+  dyscalculia: {
+    label: "Dyscalculia-Friendly",
+    emoji: "🔢",
+    color: "green",
+    bg: "bg-green-50",
+    border: "border-green-300",
+    text: "text-green-900",
+    badge: "bg-green-100 text-green-800",
+    accent: "#22c55e",
+    fontFamily: "inherit",
+    lineHeight: "leading-relaxed",
+    bgHex: "#f0fdf4",
+  },
+  simplified: {
+    label: "Simplified",
+    emoji: "✨",
+    color: "purple",
+    bg: "bg-purple-50",
+    border: "border-purple-300",
+    text: "text-purple-900",
+    badge: "bg-purple-100 text-purple-800",
+    accent: "#a855f7",
+    fontFamily: "inherit",
+    lineHeight: "leading-relaxed",
+    bgHex: "#faf5ff",
+  },
+  audioScript: {
+    label: "Audio Script",
+    emoji: "🎧",
+    color: "rose",
+    bg: "bg-rose-50",
+    border: "border-rose-300",
+    text: "text-rose-900",
+    badge: "bg-rose-100 text-rose-800",
+    accent: "#f43f5e",
+    fontFamily: "inherit",
+    lineHeight: "leading-relaxed",
+    bgHex: "#fff1f2",
+  },
+} as const;
+
+export type ModeKey = keyof typeof MODE_THEMES;
+
+export const NEURO_MODES: ModeKey[] = ["dyslexia", "adhd", "dyscalculia"];
+export const ALL_MODES: ModeKey[] = [
+  "dyslexia",
+  "adhd",
+  "dyscalculia",
+  "simplified",
+  "audioScript",
+];

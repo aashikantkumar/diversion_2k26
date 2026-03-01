@@ -9,7 +9,8 @@ const express = require("express");
 const router = express.Router();
 const upload = require("../middleware/multerConfig");
 const { extractTextFromPDF } = require("../services/pdfExtractor");
-const { saveLesson, saveLessonAssignment, getStudentById } = require("../services/supabaseClient");
+const { saveLesson, saveLessonAssignment } = require("../services/dbClient");
+const userService = require("../services/userService");
 
 // Import Member 2's LangChain services
 const { runParallelChains } = require("../services/groqClient");
@@ -49,11 +50,17 @@ router.post("/", upload.single("pdf"), async (req, res) => {
         const studentId = req.body.studentId || null;
         let student = null;
         if (studentId) {
-            student = await getStudentById(studentId);
+            student = await userService.getUserById(studentId);
             if (!student) {
                 return res.status(404).json({ error: `Student not found: ${studentId}` });
             }
-            console.log(`   👤 Assigning to student: ${student.name} (mode: ${student.learning_mode || 'not assessed'})`);
+            // Map the unified `neurodiversity` array into a singular `learning_mode` format expected by downstream functions
+            student.learning_mode = student.neurodiversity?.[0] || 'simplified';
+            if (student.learning_mode === 'none') {
+                student.learning_mode = 'simplified'; // safe default
+            }
+
+            console.log(`   👤 Assigning to student: ${student.name} (mode: ${student.learning_mode})`);
         }
 
         // 2. Extract text from PDF
@@ -127,7 +134,7 @@ router.post("/", upload.single("pdf"), async (req, res) => {
             },
         };
 
-        // 6. Save to Supabase (non-blocking)
+        // 6. Save to DB (non-blocking)
         saveLesson({
             id: lessonId,
             title,

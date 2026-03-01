@@ -1,8 +1,8 @@
 -- ============================================
--- SUPABASE SCHEMA — NeuroAdapt
+-- DATABASE SCHEMA — NeuroAdapt
 -- ============================================
--- Run this in your Supabase SQL Editor:
--- https://supabase.com/dashboard → your project → SQL Editor
+-- Auth: Auth0 handles all authentication
+-- Run this in your PostgreSQL database (psql or Supabase SQL Editor)
 
 -- 1. STUDENTS TABLE
 CREATE TABLE IF NOT EXISTS students (

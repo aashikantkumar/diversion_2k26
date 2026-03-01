@@ -1,9 +1,8 @@
 // ============================================
 // ROLE MIDDLEWARE — Enforce Teacher / Student Access
 // ============================================
+// Reads role from req.dbUser (set by auth.js loadDbUser middleware)
 // Must be used AFTER requireAuth middleware
-
-const ROLES_CLAIM = "https://neuroadapt.app/roles";
 
 /**
  * Generic role checker factory
@@ -11,13 +10,19 @@ const ROLES_CLAIM = "https://neuroadapt.app/roles";
  */
 function requireRole(...allowedRoles) {
     return (req, res, next) => {
-        const roles = req.auth?.payload?.[ROLES_CLAIM] || [];
+        const userRole = req.dbUser?.role;
 
-        const hasRole = allowedRoles.some((role) => roles.includes(role));
-        if (!hasRole) {
+        if (!userRole) {
             return res.status(403).json({
                 error: "Forbidden",
-                message: `Required role: ${allowedRoles.join(" or ")}. Your roles: ${roles.join(", ") || "none"}`,
+                message: "No role assigned. Complete onboarding first.",
+            });
+        }
+
+        if (!allowedRoles.includes(userRole)) {
+            return res.status(403).json({
+                error: "Forbidden",
+                message: `Required role: ${allowedRoles.join(" or ")}. Your role: ${userRole}`,
             });
         }
         next();
@@ -25,11 +30,11 @@ function requireRole(...allowedRoles) {
 }
 
 // Pre-built role gates for convenience
-const requireTeacher      = requireRole("teacher");
-const requireOrgStudent   = requireRole("org_student");
-const requireIndividual   = requireRole("individual");
-const requireAnyStudent   = requireRole("org_student", "individual");
-const requireAnyRole      = requireRole("teacher", "org_student", "individual");
+const requireTeacher = requireRole("teacher");
+const requireOrgStudent = requireRole("org_student");
+const requireIndividual = requireRole("individual");
+const requireAnyStudent = requireRole("org_student", "individual");
+const requireAnyRole = requireRole("teacher", "org_student", "individual");
 
 module.exports = {
     requireRole,

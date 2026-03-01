@@ -1,8 +1,9 @@
 -- ============================================
 -- AUTH SCHEMA — Organizations, Users, Invites
 -- ============================================
--- Run this in your neuroadapt PostgreSQL database:
--- psql -U neuroadapt_user -d neuroadapt -f database/auth-schema.sql
+-- Auth provider: Auth0 (JWT validation via express-oauth2-jwt-bearer)
+-- This schema stores the app-level user profile synced from Auth0 after login.
+-- Run: psql -U neuroadapt_user -d neuroadapt -f database/auth-schema.sql
 
 -- Organizations (teacher's classrooms)
 CREATE TABLE IF NOT EXISTS organizations (
@@ -12,13 +13,13 @@ CREATE TABLE IF NOT EXISTS organizations (
     created_at  TIMESTAMPTZ DEFAULT NOW()
 );
 
--- Users (synced from Auth0 after every login)
+-- Users — custom JWT auth (no Auth0)
 CREATE TABLE IF NOT EXISTS users (
     id              TEXT PRIMARY KEY DEFAULT gen_random_uuid()::TEXT,
-    auth0_id        TEXT UNIQUE NOT NULL,  -- Auth0 'sub' (e.g. auth0|abc123)
     email           TEXT UNIQUE NOT NULL,
     name            TEXT,
-    role            TEXT NOT NULL CHECK (role IN ('teacher', 'org_student', 'individual')),
+    password_hash   TEXT,                  -- NULL for managed/offline students
+    role            TEXT NOT NULL DEFAULT 'individual' CHECK (role IN ('teacher', 'org_student', 'individual')),
     org_id          TEXT REFERENCES organizations(id) ON DELETE SET NULL,
     neurodiversity  TEXT[] DEFAULT '{}',   -- ['dyslexia', 'adhd', 'dyscalculia']
     signup_type     TEXT CHECK (signup_type IN ('individual', 'org')),
@@ -26,6 +27,18 @@ CREATE TABLE IF NOT EXISTS users (
     created_at      TIMESTAMPTZ DEFAULT NOW(),
     updated_at      TIMESTAMPTZ DEFAULT NOW()
 );
+
+-- Refresh tokens (one-time-use, rotated on every refresh)
+CREATE TABLE IF NOT EXISTS refresh_tokens (
+    id          UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+    user_id     TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    token_hash  TEXT UNIQUE NOT NULL,   -- SHA-256 of the raw token
+    expires_at  TIMESTAMPTZ NOT NULL,
+    created_at  TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_refresh_tokens_token_hash ON refresh_tokens(token_hash);
+CREATE INDEX IF NOT EXISTS idx_refresh_tokens_user_id    ON refresh_tokens(user_id);
 
 -- Org invites (teacher invites student via email link)
 CREATE TABLE IF NOT EXISTS org_invites (

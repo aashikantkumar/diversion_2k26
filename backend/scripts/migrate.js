@@ -93,8 +93,34 @@ async function run() {
             CREATE INDEX IF NOT EXISTS idx_organizations_teacher_id ON organizations(teacher_id);
         `);
 
-        // ── 4. Verify ──────────────────────────────────────────────────────────
-        console.log("  [4/4] Verifying tables...");
+        // ── 4. Generated videos table ──────────────────────────────────────────
+        console.log("  [4/5] Creating generated_videos table...");
+        await client.query(`
+            CREATE TABLE IF NOT EXISTS generated_videos (
+                id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                topic               TEXT NOT NULL,
+                mode                TEXT NOT NULL CHECK (mode IN ('dyslexia','adhd','dyscalculia','simplified')),
+                specific_concept    TEXT,
+                cloudinary_url      TEXT NOT NULL,
+                cloudinary_public_id TEXT,
+                prompt              TEXT,
+                model               TEXT,
+                duration_seconds    NUMERIC,
+                width               INTEGER,
+                height              INTEGER,
+                size_bytes          INTEGER,
+                generation_time_ms  INTEGER,
+                student_id          TEXT REFERENCES users(id) ON DELETE SET NULL,
+                lesson_id           TEXT,
+                created_at          TIMESTAMPTZ DEFAULT NOW()
+            );
+            CREATE INDEX IF NOT EXISTS idx_gen_videos_student_id ON generated_videos(student_id);
+            CREATE INDEX IF NOT EXISTS idx_gen_videos_lesson_id  ON generated_videos(lesson_id);
+            CREATE INDEX IF NOT EXISTS idx_gen_videos_mode       ON generated_videos(mode);
+        `);
+
+        // ── 5. Verify ──────────────────────────────────────────────────────────
+        console.log("  [5/5] Verifying tables...");
         const { rows } = await client.query(`
             SELECT tablename FROM pg_tables WHERE schemaname = 'public'
             ORDER BY tablename;

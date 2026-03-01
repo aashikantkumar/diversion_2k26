@@ -75,7 +75,7 @@ backend/
 │   │   ├── students.js        # CRUD /api/students — student management
 │   │   └── transform.js       # POST /api/transform — text-only transform
 │   ├── services/
-│   │   ├── supabaseClient.js  # PostgreSQL DB operations (pg Pool)
+│   │   ├── dbClient.js        # PostgreSQL DB operations (pg Pool)
 │   │   ├── chatClient.js      # HuggingFace + Groq fallback chat
 │   │   ├── groqClient.js      # Multi-model parallel chains for transforms
 │   │   ├── vectorStore.js     # Gemini embeddings + RAG search
@@ -97,7 +97,7 @@ backend/
 │       └── responseFormatter.js
 ├── .env                       # Environment variables (not committed)
 ├── .env.example               # Template for env variables
-├── supabase-schema.sql        # PostgreSQL schema (students, lessons, student_lessons)
+├── db-schema.sql              # PostgreSQL schema (students, lessons, student_lessons)
 └── package.json
 ```
 
@@ -126,7 +126,7 @@ sudo -u postgres psql -c "CREATE USER neuroadapt_user WITH PASSWORD 'neuroadapt1
 sudo -u postgres psql -c "GRANT ALL PRIVILEGES ON DATABASE neuroadapt TO neuroadapt_user;"
 
 # Create tables
-psql -h localhost -U neuroadapt_user -d neuroadapt -f supabase-schema.sql
+psql -h localhost -U neuroadapt_user -d neuroadapt -f db-schema.sql
 ```
 
 ### 3. Configure Environment
